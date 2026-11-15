@@ -36,6 +36,10 @@ class CoinGeckoTests(unittest.TestCase):
                 TestClient(app) as client,
             ):
                 self.assertEqual(client.get("/health").json(), {"status": "ok"})
+                index = client.get("/")
+                self.assertEqual(index.status_code, 200)
+                self.assertIn("text/html", index.headers["content-type"])
+                self.assertIn("Coin prices", index.text)
                 response = client.get("/price", params={"coin": "bitcoin"})
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json(), {"bitcoin": {"usd": 42}})

@@ -9,8 +9,7 @@ their CoinGecko IDs.
 The project is intended to use PostgreSQL to cache CoinGecko responses and
 reduce repeated external requests. PostgreSQL is included in the Docker
 Compose setup, but the application does not yet connect to it or cache
-responses. The planned browser interface and SQLAlchemy integration are not
-implemented yet.
+responses. SQLAlchemy integration is not implemented yet.
 
 ## Requirements
 
@@ -45,7 +44,10 @@ cd app
 uvicorn main:app --reload
 ```
 
-The API is available at http://localhost:8000. PostgreSQL is not currently
+The browser interface and API are available at http://localhost:8000. The
+interface loads the available coins and displays their current USD prices;
+it requires internet access to load Alpine.js and Bootstrap from CDNs.
+PostgreSQL is not currently
 required when running the application locally.
 
 ### Using Docker

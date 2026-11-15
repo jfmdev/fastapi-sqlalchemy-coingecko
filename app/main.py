@@ -6,6 +6,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi import HTTPException, Request
+from fastapi.responses import FileResponse
 
 
 @asynccontextmanager
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+INDEX_PATH = Path(__file__).with_name("public") / "index.html"
 
 
 async def coingecko_get(
@@ -52,6 +54,11 @@ async def coingecko_get(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/", response_class=FileResponse)
+def index() -> FileResponse:
+    return FileResponse(INDEX_PATH)
 
 
 @app.get("/price")
