@@ -1,20 +1,20 @@
 # FastAPI SQLAlchemy CoinGecko
 
-> An example application using FastAPI and the CoinGecko API, with PostgreSQL caching planned.
+> An example application using FastAPI, SQLAlchemy, PostgreSQL and the CoinGecko API.
 
 A lightweight application for looking up cryptocurrency prices from CoinGecko.
 The FastAPI endpoints return prices in USD and a list of supported coins and
 their CoinGecko IDs.
 
-The project is intended to use PostgreSQL to cache CoinGecko responses and
-reduce repeated external requests. PostgreSQL is included in the Docker
-Compose setup, but the application does not yet connect to it or cache
-responses. SQLAlchemy integration is not implemented yet.
+The coin list is cached in PostgreSQL for 24 hours after a successful refresh.
+The first request after expiry refreshes the cache; concurrent requests wait for
+the refresh. If a refresh fails, the request reports the error, the previous
+cache remains intact, and a later request retries. Prices are not cached.
 
 ## Requirements
 
 * A [CoinGecko Demo API key](https://www.coingecko.com/en/api/pricing).
-* Python 3.10 or later for a local installation, or Docker and Docker Compose.
+* Python 3.10 or later and PostgreSQL for a local installation, or Docker and Docker Compose.
 
 Create `app/.env` with your key:
 
@@ -24,6 +24,13 @@ COINGECKO_API_KEY=your_coingecko_demo_api_key
 
 The application reads this file at startup. An existing `COINGECKO_API_KEY`
 environment variable takes precedence. Keep the key private.
+
+For a local installation, also set the following environment variables in
+`app/.env` or the shell: `POSTGRES_PASSWORD` (required), `POSTGRES_HOST`
+(default `localhost`), `POSTGRES_PORT` (default `5432`), `POSTGRES_USER`
+(default `postgres`), and `POSTGRES_DB` (default `app`). The database must
+already exist and the user must be able to create tables. The application
+creates its tables at startup.
 
 For Docker Compose, also set `POSTGRES_PASSWORD` in your shell or a separate
 `.env` file in the repository root. You can optionally set `POSTGRES_USER`
@@ -47,8 +54,6 @@ uvicorn main:app --reload
 The browser interface and API are available at http://localhost:8000. The
 interface loads the available coins and displays their current USD prices;
 it requires internet access to load Alpine.js and Bootstrap from CDNs.
-PostgreSQL is not currently
-required when running the application locally.
 
 ### Using Docker
 
@@ -66,14 +71,16 @@ volume is first created.
 
 #### Manual Docker setup
 
-To run the application container without Compose:
+To run the application container without Compose, start PostgreSQL separately
+and set its reachable host and other connection settings in `app/.env`:
 
 ```bash
 docker build -t fastapi-coingecko ./app
 docker run --rm -p 8000:8000 --env-file ./app/.env fastapi-coingecko
 ```
 
-This starts only the API; the application does not yet use PostgreSQL.
+This starts only the application container; `localhost` inside it refers to
+the container itself, not the host.
 
 ## API endpoints
 
@@ -82,6 +89,11 @@ This starts only the API; the application does not yet use PostgreSQL.
 * `GET /coin/list` returns the supported coins and their IDs.
 
 Interactive API documentation is available at http://localhost:8000/docs.
+
+## Tests
+
+Install `app/requirements-test.txt` and run `python -m unittest app.test_main`
+from the repository root. The tests use SQLite and mock CoinGecko.
 
 ## License
 
