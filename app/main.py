@@ -1,7 +1,9 @@
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
@@ -77,7 +79,7 @@ def utc_now() -> datetime:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     load_dotenv(Path(__file__).with_name(".env"))
     api_key = os.getenv("COINGECKO_API_KEY")
     if not api_key or not api_key.strip():
@@ -132,7 +134,7 @@ UPSTREAM_ERROR_RESPONSES = {
 
 async def coingecko_get(
     request: Request, path: str, params: dict[str, str] | None = None
-):
+) -> Any:
     try:
         response = await request.app.state.coingecko_client.get(path, params=params)
         response.raise_for_status()

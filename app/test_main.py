@@ -6,13 +6,14 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Callable, Coroutine, NoReturn
 from unittest.mock import patch
 
 import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from app.main import app, create_database_engine
 
@@ -21,7 +22,7 @@ BITCOIN = {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}
 
 
 class OpenAPITests(unittest.TestCase):
-    def test_swagger_describes_endpoints_and_response_shapes(self):
+    def test_swagger_describes_endpoints_and_response_shapes(self) -> None:
         client = TestClient(app)
         self.addCleanup(client.close)
         self.assertIn("swagger-ui", client.get("/docs").text)
@@ -57,24 +58,28 @@ class OpenAPITests(unittest.TestCase):
 
 
 class CoinGeckoTests(unittest.TestCase):
-    def setUp(self):
-        self.stack = ExitStack()
+    def setUp(self) -> None:
+        self.stack: ExitStack = ExitStack()
         self.addCleanup(self.stack.close)
         directory = self.stack.enter_context(tempfile.TemporaryDirectory())
         database_url = URL.create("sqlite+aiosqlite", database=str(Path(directory, "test.db")))
         self.stack.enter_context(
             patch("app.main.create_database_engine", side_effect=lambda: create_async_engine(database_url))
         )
-        async def lock_sqlite(connection):
+        async def lock_sqlite(connection: AsyncConnection) -> None:
             await connection.execute(text("BEGIN IMMEDIATE"))
 
         self.stack.enter_context(patch("app.main.lock_coin_cache", side_effect=lock_sqlite))
         self.stack.enter_context(patch.dict(os.environ, {"COINGECKO_API_KEY": "test-key"}))
         self.stack.enter_context(patch("app.main.load_dotenv"))
-        self.now = datetime(2026, 1, 1, 12)
+        self.now: datetime = datetime(2026, 1, 1, 12)
         self.stack.enter_context(patch("app.main.utc_now", side_effect=lambda: self.now))
 
-    def mock_upstream(self, handler):
+    def mock_upstream(
+        self,
+        handler: Callable[[httpx.Request], httpx.Response]
+        | Callable[[httpx.Request], Coroutine[None, None, httpx.Response]],
+    ) -> None:
         client_class = httpx.AsyncClient
         transport = httpx.MockTransport(handler)
         self.stack.enter_context(
@@ -84,10 +89,10 @@ class CoinGeckoTests(unittest.TestCase):
             )
         )
 
-    def test_routes_use_demo_key_and_return_upstream_json(self):
+    def test_routes_use_demo_key_and_return_upstream_json(self) -> None:
         requests = []
 
-        def handle(request):
+        def handle(request: httpx.Request) -> httpx.Response:
             requests.append(request)
             if request.url.path == "/api/v3/simple/price":
                 return httpx.Response(200, json={"bitcoin": {"usd": 42}})
@@ -114,11 +119,11 @@ class CoinGeckoTests(unittest.TestCase):
         self.assertEqual(requests[1].url.path, "/api/v3/coins/list")
         self.assertTrue(all(r.headers["x-cg-demo-api-key"] == "test-key" for r in requests))
 
-    def test_cache_survives_restart_and_refreshes_after_one_day(self):
+    def test_cache_survives_restart_and_refreshes_after_one_day(self) -> None:
         calls = []
         newer = {"id": "ethereum", "symbol": "eth", "name": "Ethereum", "extra": "value"}
 
-        def handle(request):
+        def handle(request: httpx.Request) -> httpx.Response:
             calls.append(request)
             return httpx.Response(200, json=[BITCOIN] if len(calls) == 1 else [newer, BITCOIN])
 
@@ -134,7 +139,7 @@ class CoinGeckoTests(unittest.TestCase):
             self.assertEqual(client.get("/coin/list").json(), [newer, BITCOIN])
             self.assertEqual(len(calls), 2)
 
-    def test_empty_list_is_cached(self):
+    def test_empty_list_is_cached(self) -> None:
         calls = []
         self.mock_upstream(lambda request: (calls.append(request), httpx.Response(200, json=[]))[1])
         with TestClient(app) as client:
@@ -142,10 +147,10 @@ class CoinGeckoTests(unittest.TestCase):
             self.assertEqual(client.get("/coin/list").json(), [])
         self.assertEqual(len(calls), 1)
 
-    def test_concurrent_requests_refresh_only_once(self):
+    def test_concurrent_requests_refresh_only_once(self) -> None:
         calls = []
 
-        async def handle(request):
+        async def handle(request: httpx.Request) -> httpx.Response:
             calls.append(request)
             await asyncio.sleep(0.1)
             return httpx.Response(200, json=[BITCOIN])
@@ -156,7 +161,7 @@ class CoinGeckoTests(unittest.TestCase):
         self.assertEqual([response.json() for response in responses], [[BITCOIN], [BITCOIN]])
         self.assertEqual(len(calls), 1)
 
-    def test_failed_or_invalid_refresh_keeps_cache_and_retries(self):
+    def test_failed_or_invalid_refresh_keeps_cache_and_retries(self) -> None:
         responses = iter([
             httpx.Response(200, json=[BITCOIN]),
             httpx.Response(429),
@@ -176,8 +181,8 @@ class CoinGeckoTests(unittest.TestCase):
             self.now += timedelta(seconds=1)
             self.assertEqual(client.get("/coin/list").json()[0]["id"], "new")
 
-    def test_upstream_errors_are_reported(self):
-        def handle(request):
+    def test_upstream_errors_are_reported(self) -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
             if request.url.path.endswith("/simple/price"):
                 return httpx.Response(429)
             return httpx.Response(200, text="invalid JSON")
@@ -190,7 +195,7 @@ class CoinGeckoTests(unittest.TestCase):
             self.assertEqual(client.get("/coin/list").status_code, 502)
             self.assertEqual(client.get("/price").status_code, 422)
 
-    def test_startup_requires_key(self):
+    def test_startup_requires_key(self) -> None:
         with (
             patch.dict(os.environ, {}, clear=True),
             self.assertRaisesRegex(RuntimeError, "COINGECKO_API_KEY"),
@@ -198,8 +203,8 @@ class CoinGeckoTests(unittest.TestCase):
         ):
             pass
 
-    def test_upstream_timeout_is_reported(self):
-        def handle(request):
+    def test_upstream_timeout_is_reported(self) -> None:
+        def handle(request: httpx.Request) -> NoReturn:
             raise httpx.ReadTimeout("timeout", request=request)
 
         self.mock_upstream(handle)
@@ -208,7 +213,7 @@ class CoinGeckoTests(unittest.TestCase):
 
 
 class DatabaseSettingsTests(unittest.TestCase):
-    def test_database_url_uses_environment_without_mangling_password(self):
+    def test_database_url_uses_environment_without_mangling_password(self) -> None:
         with (
             patch.dict(os.environ, {
                 "POSTGRES_HOST": "db.example",
@@ -225,7 +230,7 @@ class DatabaseSettingsTests(unittest.TestCase):
             self.assertEqual((url.host, url.port, url.username, url.password, url.database),
                              ("db.example", 5433, "user", "p@ss:/word", "coins"))
 
-    def test_missing_password_and_invalid_port_are_rejected(self):
+    def test_missing_password_and_invalid_port_are_rejected(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "connection settings"):
                 create_database_engine()
