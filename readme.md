@@ -84,11 +84,13 @@ the container itself, not the host.
 
 ## API endpoints
 
-* `GET /health` returns the application's health status.
+* `GET /` serves the browser interface.
+* `GET /health` returns the application's health status (without checking dependencies).
 * `GET /price?coin=bitcoin` returns the price in USD for a CoinGecko coin ID.
 * `GET /coin/list` returns the supported coins and their IDs.
 
-Interactive API documentation is available at http://localhost:8000/docs.
+Swagger UI is available at http://localhost:8000/docs, with the OpenAPI schema
+at http://localhost:8000/openapi.json and ReDoc at http://localhost:8000/redoc.
 
 ## Tests
 

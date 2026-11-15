@@ -20,6 +20,42 @@ from app.main import app, create_database_engine
 BITCOIN = {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}
 
 
+class OpenAPITests(unittest.TestCase):
+    def test_swagger_describes_endpoints_and_response_shapes(self):
+        client = TestClient(app)
+        self.addCleanup(client.close)
+        self.assertIn("swagger-ui", client.get("/docs").text)
+        response = client.get("/openapi.json")
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()
+        paths = schema["paths"]
+        self.assertEqual(set(paths), {"/", "/health", "/price", "/coin/list"})
+        for path in paths.values():
+            self.assertTrue(path["get"]["summary"])
+            self.assertTrue(path["get"]["description"])
+
+        self.assertIn("text/html", paths["/"]["get"]["responses"]["200"]["content"])
+        health = paths["/health"]["get"]["responses"]["200"]["content"]["application/json"]
+        self.assertEqual(health["example"], {"status": "ok"})
+        price = paths["/price"]["get"]
+        parameter = price["parameters"][0]
+        self.assertEqual((parameter["name"], parameter["in"], parameter["required"]),
+                         ("coin", "query", True))
+        self.assertEqual(parameter["schema"]["examples"], ["bitcoin"])
+        self.assertEqual(
+            price["responses"]["200"]["content"]["application/json"]["example"],
+            {"bitcoin": {"usd": 42000}},
+        )
+        coins = paths["/coin/list"]["get"]
+        coin_schema = coins["responses"]["200"]["content"]["application/json"]["schema"]
+        self.assertEqual(coin_schema["type"], "array")
+        self.assertEqual(set(coin_schema["items"]["required"]), {"id", "symbol", "name"})
+        self.assertIn("24 hours", coins["description"])
+        for operation in (price, coins):
+            self.assertIn("502", operation["responses"])
+            self.assertIn("504", operation["responses"])
+
+
 class CoinGeckoTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()

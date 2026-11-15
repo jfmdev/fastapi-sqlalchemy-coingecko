@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import JSON, DateTime, Integer, String, delete, insert, select, text
@@ -100,8 +100,34 @@ async def lifespan(app: FastAPI):
         await engine.dispose()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="CoinGecko Price API",
+    description=(
+        "Look up cryptocurrency prices in USD and browse the available coins. "
+        "The coin list is cached in PostgreSQL for 24 hours; prices are not cached."
+    ),
+    lifespan=lifespan,
+)
 INDEX_PATH = Path(__file__).with_name("public") / "index.html"
+
+UPSTREAM_ERROR_RESPONSES = {
+    502: {
+        "description": "CoinGecko returned an error or invalid response, or the request failed.",
+        "content": {
+            "application/json": {
+                "example": {"detail": "CoinGecko returned HTTP 429"}
+            }
+        },
+    },
+    504: {
+        "description": "The CoinGecko request timed out.",
+        "content": {
+            "application/json": {
+                "example": {"detail": "CoinGecko request timed out"}
+            }
+        },
+    },
+}
 
 
 async def coingecko_get(
@@ -126,24 +152,109 @@ async def coingecko_get(
         raise HTTPException(status_code=502, detail="CoinGecko returned invalid JSON") from exc
 
 
-@app.get("/health")
+@app.get(
+    "/health",
+    summary="Check application health",
+    description="Return the application's status without checking PostgreSQL or CoinGecko.",
+    responses={
+        200: {
+            "description": "Application is responding.",
+            "content": {"application/json": {"example": {"status": "ok"}}},
+        }
+    },
+)
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/", response_class=FileResponse)
+@app.get(
+    "/",
+    response_class=FileResponse,
+    summary="Open the browser interface",
+    description="Return the HTML single-page application for browsing coins and prices.",
+    responses={
+        200: {
+            "description": "HTML application.",
+            "content": {"text/html": {"schema": {"type": "string"}}},
+        }
+    },
+)
 def index() -> FileResponse:
     return FileResponse(INDEX_PATH)
 
 
-@app.get("/price")
-async def price(request: Request, coin: str):
+@app.get(
+    "/price",
+    summary="Get a coin price",
+    description=(
+        "Fetch the current USD price from CoinGecko. The response is passed through "
+        "from CoinGecko and may be empty when no price is available."
+    ),
+    responses={
+        200: {
+            "description": "CoinGecko price response, keyed by coin ID.",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {"type": "number"},
+                        },
+                    },
+                    "example": {"bitcoin": {"usd": 42000}},
+                }
+            },
+        },
+        **UPSTREAM_ERROR_RESPONSES,
+    },
+)
+async def price(
+    request: Request,
+    coin: str = Query(
+        ..., description="CoinGecko coin ID, sent as the CoinGecko ids parameter.",
+        examples=["bitcoin"],
+    ),
+):
     return await coingecko_get(
         request, "/simple/price", {"ids": coin, "vs_currencies": "usd"}
     )
 
 
-@app.get("/coin/list")
+@app.get(
+    "/coin/list",
+    summary="List available coins",
+    description=(
+        "Return the CoinGecko coin list, cached in PostgreSQL for 24 hours after "
+        "a successful refresh. The first request after expiry refreshes the cache; "
+        "concurrent requests wait. If the refresh fails, the error is returned, "
+        "the previous cache is preserved, and a later request retries."
+    ),
+    responses={
+        200: {
+            "description": "List of coins in CoinGecko order; additional fields may be present.",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["id", "symbol", "name"],
+                            "properties": {
+                                "id": {"type": "string"},
+                                "symbol": {"type": "string"},
+                                "name": {"type": "string"},
+                            },
+                            "additionalProperties": True,
+                        },
+                    },
+                    "example": [{"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"}],
+                }
+            },
+        },
+        **UPSTREAM_ERROR_RESPONSES,
+    },
+)
 async def coin_list(request: Request):
     async with AsyncSession(request.app.state.database_engine) as session:
         async with session.begin():
